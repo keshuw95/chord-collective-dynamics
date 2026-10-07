@@ -1,6 +1,43 @@
 # CHORD: Collective Higher-Order Relational Dynamics
 
-Core implementation of CHORD, a neural ODE that infers sparse latent collectives from trajectories and lets them act on their members.
+Code for *Learning Collective Dynamics Beyond Pairwise Relations via Latent Higher-Order Interactions*.
+
+## Overview
+
+Learned models of interacting dynamics usually represent interactions as pairs, yet flocks, crowds and sports teams act in groups. A group of three and the three pairwise interactions it contains induce the same interaction graph, so no model that sees only pairs can tell them apart. The groups themselves are never observed: trajectories record where agents go, not which groups they act in.
+
+**Theory.** We measure what pairs cannot express by the *higher-order energy* $E_{HO}$, the part of the dynamics that no sum of pairwise terms can represent, and show that:
+
+- every pairwise model errs by at least a constant times $E_{HO}$;
+- models given only the pairwise graph face a minimax error floor, because different hypergraphs share one graph;
+- latent collectives are identifiable from trajectories when each collective has an anchor member and the dynamics excite it;
+- the best collective model improves on the best pairwise model by exactly $E_{HO}$ under an isometric readout.
+
+**Model.** These results dictate CHORD, a neural ODE whose vector field is a latent collective model:
+
+1. **Latent incidence.** Entities are softly assigned to latent collectives through sparse entmax memberships $Z$, whose rows lie on the simplex and can be exactly one-hot (anchors).
+2. **Hyperedge encoding.** Each collective pools its members' states, weighted by membership, and decodes them nonlinearly, which creates the higher-order terms; collectives then interact through attention.
+3. **Collective feedback.** Collectives act on their members through $Z$, and an orthonormal readout turns the coupling into the time derivative.
+4. **Neural ODE fit.** The states and the membership logits are integrated jointly and fitted to trajectories; entropy and minimum-volume regularisers select the identifiable factorisation.
+
+The full model adds multiscale collectives, receiver-specific influence, joint discrete events (for example, ball possession), and components for *open* systems, in which groups form, split and merge and agents enter and leave. **CHORD-Stochastic** draws a latent intention for each collective at the start of a forecast, so that sampling yields multiple futures. It is trained with the best-of-K objective or with the energy score.
+
+## Repository Structure
+
+```
+chord-collective-dynamics/
+├── chord/
+│   ├── model.py        # CHORD vector field: latent incidence, hyperedge encoding, collective feedback,
+│   │                   #   open-system components, multiscale collectives, receiver-specific influence,
+│   │                   #   joint events and latent intentions
+│   ├── losses.py       # prediction losses, regularisers (entropy, minimum volume, size), energy score
+│   ├── data.py         # trajectory containers, velocity estimates from observed positions
+│   ├── train.py        # derivative matching and rollout training through the ODE solver
+│   └── stochastic.py   # CHORD-Stochastic: training on K sampled futures, sampling
+├── tests/
+│   └── test_chord.py   # forward pass, presence masks, deterministic and stochastic training
+└── pyproject.toml
+```
 
 ## Installation
 
@@ -9,37 +46,4 @@ pip install -e ".[dev]"
 pytest
 ```
 
-## Contents
-
-| File | Contents |
-|---|---|
-| `chord/model.py` | The CHORD vector field: latent incidence (entmax memberships), hyperedge encoding (membership-weighted pooling, collective interaction) and collective feedback with an orthonormal readout. It also contains the open-system components (relational memberships, null collective, centroid feedback, pairwise background, kinematic readout), multiscale collectives, receiver-specific influence, joint events and latent intentions. |
-| `chord/losses.py` | Prediction losses, the regularisers L_ent, L_vol and L_size, and the energy score |
-| `chord/data.py` | Trajectory containers and velocity estimates from observed positions |
-| `chord/train.py` | Derivative matching (L_vel) and rollout training through the ODE solver (L_pred) |
-| `chord/stochastic.py` | CHORD-Stochastic: training on K sampled futures (best-of-K or energy score) and sampling |
-
-## Usage
-
-```python
-from chord import CHORD, CHORDConfig
-from chord.data import add_velocity_estimates, derivative_targets
-from chord.stochastic import StochasticTrainConfig, sample, train_stochastic
-from chord.train import TrainConfig, TrajectoryTrainConfig, train_trajectories, train_velocity
-
-# full model for planar agents observed through positions only; the last entity is the ball
-config = CHORDConfig(
-    n_nodes=11, state_dim=4, order=2, embed_dim=8, identity_first=False, membership_time=0.3,
-    relational=True, null_collective=True, centroid_feedback=True, pairwise_channel=True,
-    pair_aggregation="sum", pair_neighbours=8, translation_invariant=True,
-    n_collectives=15, scales=(1, 2, 4, 8), receiver_specific=True, event_anchor=10, latent_dim=8,
-)
-model = CHORD(config)
-
-# train, val: chord.data.TrajectoryData with positions (B, T, N, 2)
-train_velocity(model, derivative_targets(train), derivative_targets(val), TrainConfig(lambda_size=0.1))
-train, val = add_velocity_estimates(train), add_velocity_estimates(val)
-train_trajectories(model, train, val, TrajectoryTrainConfig(loss_dims=2, centre=True, lambda_size=0.1))
-train_stochastic(model, train, val, StochasticTrainConfig(objective="variety"))
-futures = sample(model, x0, n_samples=20, n_steps=20, interval=0.2, mask=present)
-```
+Requires Python 3.10+, PyTorch, torchdiffeq and entmax.
